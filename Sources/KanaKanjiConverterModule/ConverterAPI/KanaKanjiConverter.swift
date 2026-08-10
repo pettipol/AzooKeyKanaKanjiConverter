@@ -469,9 +469,26 @@ public final class KanaKanjiConverter {
     ///   - language: 言語コード。現在は`en-US`と`el(ギリシャ語)`のみ対応している。
     /// - Returns:
     ///   予測変換候補
+    /// Copaky fork: ask `UITextChecker` for completions, falling back from a regional code to its
+    /// primary subtag. Not every device exposes "it-IT"; most expose "it". Without this an Italian
+    /// typist silently gets NO completions at all, which is exactly how the first version of the
+    /// Italian support shipped as dead code.
+    /// 地域付きコードが使えない端末のために主要サブタグへフォールバックする。
+    private func completions(range: NSRange, in ruby: String, language: String) -> [String]? {
+        if let completions = checker.completions(forPartialWordRange: range, in: ruby, language: language) {
+            return completions
+        }
+        guard let primary = language.split(separator: "-").first, primary != Substring(language) else {
+            return nil
+        }
+        return checker.completions(forPartialWordRange: range, in: ruby, language: String(primary))
+    }
+
     private func getForeignPredictionCandidate(inputData: ComposingText, language: String, penalty: PValue = -5) -> [Candidate] {
         switch language {
-        case "en-US":
+        // Copaky fork: Italian shares this branch with English — same Latin script, same contract.
+        // `language` is handed to the checker unchanged, so each keeps its own dictionary.
+        case "en-US", "it-IT":
             var result: [Candidate] = []
             let ruby = String(inputData.input.compactMap {
                 if case let .character(c) = $0.piece { c } else { nil }
@@ -480,7 +497,7 @@ public final class KanaKanjiConverter {
             if !ruby.onlyRomanAlphabet {
                 return result
             }
-            if let completions = checker.completions(forPartialWordRange: range, in: ruby, language: language) {
+            if let completions = self.completions(range: range, in: ruby, language: language) {
                 if !completions.isEmpty {
                     let data = [DicdataElement(ruby: ruby, cid: CIDData.固有名詞.cid, mid: MIDData.一般.mid, value: penalty)]
                     let candidate: Candidate = Candidate(
