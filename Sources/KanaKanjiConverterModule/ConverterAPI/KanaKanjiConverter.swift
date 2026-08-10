@@ -340,6 +340,10 @@ public final class KanaKanjiConverter {
             case .el_GR:
                 _ = self.checker.completions(forPartialWordRange: NSRange(location: 0, length: 1), in: "a", language: "el-GR")
                 self.checkerInitialized[language] = true
+            case .it_IT:
+                // Copaky fork: warm up the Italian spell checker exactly like the English one.
+                _ = self.checker.completions(forPartialWordRange: NSRange(location: 0, length: 1), in: "a", language: "it-IT")
+                self.checkerInitialized[language] = true
             case .none, .ja_JP:
                 checkerInitialized[language] = true
             }
@@ -880,9 +884,17 @@ public final class KanaKanjiConverter {
             var foreignCandidates: [Candidate] = []
             if options.requireEnglishPrediction.isEnabled {
                 var englishCandidates: [Candidate] = []
-                englishCandidates.append(contentsOf: self.getForeignPredictionCandidate(inputData: inputData, language: "en-US"))
-                if options.keyboardLanguage == .el_GR {
-                    englishCandidates.append(contentsOf: self.getForeignPredictionCandidate(inputData: inputData, language: "el"))
+                if options.keyboardLanguage == .it_IT {
+                    // Copaky fork: on the Italian keyboard the predictions must be Italian ONLY.
+                    // Mixing in "en-US" here is what makes an Italian typist see English words on
+                    // every keystroke — the single most reported annoyance for non-Japanese users.
+                    // イタリア語キーボードでは英語予測を混ぜない。
+                    englishCandidates.append(contentsOf: self.getForeignPredictionCandidate(inputData: inputData, language: "it-IT"))
+                } else {
+                    englishCandidates.append(contentsOf: self.getForeignPredictionCandidate(inputData: inputData, language: "en-US"))
+                    if options.keyboardLanguage == .el_GR {
+                        englishCandidates.append(contentsOf: self.getForeignPredictionCandidate(inputData: inputData, language: "el"))
+                    }
                 }
                 englishPredictionResults = englishCandidates
                 if options.requireEnglishPrediction.shouldMix {

@@ -733,7 +733,9 @@ public final class DicdataStore {
             }
         }
         // convertTargetを英単語として候補に追加する
-        if keyboardLanguage == .en_US, convertTarget.onlyRomanAlphabet {
+        // Copaky fork: same treatment for every Latin-script language (it_IT), otherwise an Italian
+        // word typed on the Italian keyboard would never be offered as-is.
+        if keyboardLanguage.usesLatinScript, convertTarget.onlyRomanAlphabet {
             result.append(DicdataElement(ruby: convertTarget, cid: CIDData.固有名詞.cid, mid: MIDData.英単語.mid, value: -14))
         }
         // convertTargetが1文字のケースでは、ひらがな・カタカナに変換したものを候補に追加する
