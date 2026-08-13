@@ -70,6 +70,45 @@ final class ItalianFrequencyLexiconTests: XCTestCase {
         XCTAssertFalse(ItalianFrequencyLexicon.isPredictableItalian(""))
     }
 
+    // Codex adversarial review 2026-08-14: accent correction must be DIRECTIONAL and the corpus
+    // must not contain apostrophe-stripped merges or wrong-accent variants. These pin both.
+
+    func testAccentedInputNeverSuggestsSideways() {
+        // typed WITH the correct accent: no fold-equal variant may come back (perchè, perche)
+        let words = ItalianFrequencyLexicon.suggestions(forPrefix: "perché", limit: 10).map(\.word)
+        XCTAssertFalse(words.contains("perchè"), "wrong-accent sibling offered for correct input: \(words)")
+        XCTAssertFalse(words.contains("perche"), "unaccented downgrade offered for correct input: \(words)")
+        XCTAssertFalse(words.contains { ItalianFrequencyLexicon.fold($0) == "perche" },
+                       "no fold-equal of an already-accented prefix may be suggested: \(words)")
+    }
+
+    func testCorpusCarriesNoWrongAccentVariantOfCommonWords() {
+        // plain input gets the accent fix — and exactly ONE: the correct spelling
+        let fixes = ItalianFrequencyLexicon.suggestions(forPrefix: "perche", limit: 10)
+            .filter(\.isAccentVariantOfPrefix).map(\.word)
+        XCTAssertEqual(fixes, ["perché"], "plain 'perche' must offer only the correct 'perché', got \(fixes)")
+        let comeFixes = ItalianFrequencyLexicon.suggestions(forPrefix: "come", limit: 10)
+            .filter(\.isAccentVariantOfPrefix).map(\.word)
+        XCTAssertTrue(comeFixes.isEmpty, "'come' must not be 'corrected' (comè is a stripped com'è): \(comeFixes)")
+    }
+
+    func testCorpusCarriesNoApostropheStrippedMerges() {
+        let words = ItalianFrequencyLexicon.suggestions(forPrefix: "dell", limit: 30).map(\.word)
+        for w in words where w.count > 5 {
+            XCTAssertNil(w.range(of: "^(dell|dall|nell|sull|quell)[aeiouàèéìòù]", options: [.regularExpression, .caseInsensitive]),
+                         "apostrophe-stripped merge in suggestions: \(w)")
+        }
+        let senz = ItalianFrequencyLexicon.suggestions(forPrefix: "senz", limit: 10).map(\.word)
+        XCTAssertFalse(senz.contains("senzaltro"), "senz'altro must not appear merged: \(senz)")
+    }
+
+    func testShortAccentPairsSurvive() {
+        // e/è, si/sì, ne/né are distinct words — the dedup must never eat them
+        XCTAssertTrue(ItalianFrequencyLexicon.suggestions(forPrefix: "e", limit: 5).contains { $0.word == "è" })
+        XCTAssertTrue(ItalianFrequencyLexicon.suggestions(forPrefix: "si", limit: 8).contains { $0.word == "sì" })
+        XCTAssertTrue(ItalianFrequencyLexicon.suggestions(forPrefix: "ne", limit: 8).contains { $0.word == "né" })
+    }
+
     func testLookupIsFastEnoughForAKeystroke() {
         ItalianFrequencyLexicon.preload()
         let start = Date()

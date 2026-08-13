@@ -65,9 +65,16 @@ enum ItalianFrequencyLexicon {
     }
 
     /// Force the lazy `entries` build now (converter warm-up path), so the one-time load and
-    /// sort do not land on the user's first keystroke.
+    /// sort do not land on the user's first keystroke. The build runs on a background task:
+    /// the warm-up call site is on the keyboard's main actor and a synchronous 50k-entry
+    /// load+fold+sort (~0.15 s in debug on an M4) would visibly stall the first Italian
+    /// activation. `static let` initialization is one-time and thread-safe, so a keystroke
+    /// arriving before the build finishes simply blocks on the same initialization instead of
+    /// running it twice. / 初期化はバックグラウンドで先行実行（static let は一度きり・スレッド安全）。
     static func preload() {
-        _ = entries.count
+        Task.detached(priority: .userInitiated) {
+            _ = entries.count
+        }
     }
 
     /// Characters an Italian composition may contain and still be predictable.
@@ -107,23 +114,45 @@ enum ItalianFrequencyLexicon {
         }
         matched.sort { $0.rank < $1.rank }
 
+        // Accent correction is DIRECTIONAL: only an unaccented typed prefix gets fold-equal
+        // entries offered (and boosted) as accent fixes — "perche" → "perché". When the user
+        // already typed accents, a fold-equal entry can only be a different (hence wrong or
+        // redundant) spelling of what they typed, so it is dropped entirely: "perché" must never
+        // suggest sideways to "perchè" or down to "perche".
+        // アクセント補正は一方向のみ：入力に既にアクセントがある場合、同綴り異アクセントは出さない。
+        let typedIsPlain = typed.lowercased() == foldedPrefix
+
+        // Accent fixes ride OUTSIDE the limit: "sì" or "né" rank far below the first `limit`
+        // completions of their prefix, and an accent fix that only sometimes surfaces is worse
+        // than none. There are at most a couple of fold-equal entries per prefix.
+        // アクセント補正候補は limit の枠外で必ず含める。
         var seen = Set<String>()
-        var result: [Suggestion] = []
+        var fixes: [Suggestion] = []
+        var completions: [Suggestion] = []
         for entry in matched {
+            let isFoldEqual = entry.folded == foldedPrefix
+            if isFoldEqual && !typedIsPlain {
+                continue
+            }
+            if !isFoldEqual && completions.count >= limit {
+                continue
+            }
             let adapted = adaptCase(of: entry.word, to: typed)
             if adapted == typed || !seen.insert(adapted).inserted {
                 continue
             }
-            result.append(Suggestion(
+            let suggestion = Suggestion(
                 word: adapted,
                 rank: Int(entry.rank),
-                isAccentVariantOfPrefix: entry.folded == foldedPrefix
-            ))
-            if result.count >= limit {
-                break
+                isAccentVariantOfPrefix: isFoldEqual && typedIsPlain
+            )
+            if suggestion.isAccentVariantOfPrefix {
+                fixes.append(suggestion)
+            } else {
+                completions.append(suggestion)
             }
         }
-        return result
+        return fixes + completions
     }
 
     /// Mirror the case of the typed prefix onto a suggestion: "Perch" → "Perché",
