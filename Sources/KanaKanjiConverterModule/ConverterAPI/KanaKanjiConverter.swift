@@ -341,8 +341,11 @@ public final class KanaKanjiConverter {
                 _ = self.checker.completions(forPartialWordRange: NSRange(location: 0, length: 1), in: "a", language: "el-GR")
                 self.checkerInitialized[language] = true
             case .it_IT:
-                // Copaky fork: warm up the Italian spell checker exactly like the English one.
+                // Copaky fork: warm up the Italian spell checker exactly like the English one,
+                // and build the bundled lexicon now so its one-time load+sort does not land on
+                // the first keystroke. / 同梱辞書もここで構築し初打鍵の遅延を避ける。
                 _ = self.checker.completions(forPartialWordRange: NSRange(location: 0, length: 1), in: "a", language: "it-IT")
+                ItalianFrequencyLexicon.preload()
                 self.checkerInitialized[language] = true
             case .none, .ja_JP:
                 checkerInitialized[language] = true
@@ -486,9 +489,84 @@ public final class KanaKanjiConverter {
 
     private func getForeignPredictionCandidate(inputData: ComposingText, language: String, penalty: PValue = -5) -> [Candidate] {
         switch language {
-        // Copaky fork: Italian shares this branch with English — same Latin script, same contract.
-        // `language` is handed to the checker unchanged, so each keeps its own dictionary.
-        case "en-US", "it-IT":
+        case "it-IT":
+            // Copaky fork: Italian prediction is driven by the bundled frequency lexicon first
+            // (deterministic, offline, accent-aware), with UITextChecker as a long-tail fallback.
+            // Unlike the English branch this accepts accented prefixes ("perch" AND "perché") and
+            // elisions ("l'ho", "un'altra"): prediction runs on the segment after the apostrophe
+            // and the confirmed head is re-attached to every suggestion.
+            // イタリア語予測は同梱の頻度辞書を第一候補源とし、UITextChecker は補助に回す。
+            // アクセント付き入力とアポストロフィの省略形にも対応する。
+            var result: [Candidate] = []
+            let ruby = String(inputData.input.compactMap {
+                if case let .character(c) = $0.piece { c } else { nil }
+            })
+            guard ItalianFrequencyLexicon.isPredictableItalian(ruby) else {
+                return result
+            }
+            // elision: predict on the tail after the last apostrophe, re-attach the head
+            let head: String
+            let effectivePrefix: String
+            if let cut = ruby.lastIndex(where: { $0 == "'" || $0 == "’" }) {
+                head = String(ruby[...cut])
+                effectivePrefix = String(ruby[ruby.index(after: cut)...])
+            } else {
+                head = ""
+                effectivePrefix = ruby
+            }
+            if effectivePrefix.isEmpty {
+                return result
+            }
+            // the text as typed always leads, exactly like the English branch
+            result.append(Candidate(
+                text: ruby,
+                value: penalty,
+                composingCount: .inputCount(inputData.input.count),
+                lastMid: MIDData.一般.mid,
+                data: [DicdataElement(ruby: ruby, cid: CIDData.固有名詞.cid, mid: MIDData.一般.mid, value: penalty)]
+            ))
+            var seen = Set<String>([ruby])
+            // lexicon: accent variants of the typed prefix rank right under it; completions follow
+            var completionValue: PValue = penalty - 1
+            for suggestion in ItalianFrequencyLexicon.suggestions(forPrefix: effectivePrefix, limit: 10) {
+                let text = head + suggestion.word
+                guard seen.insert(text).inserted else {
+                    continue
+                }
+                let value: PValue = suggestion.isAccentVariantOfPrefix ? penalty - 0.5 : completionValue
+                if !suggestion.isAccentVariantOfPrefix {
+                    completionValue -= 0.4
+                }
+                result.append(Candidate(
+                    text: text,
+                    value: value,
+                    composingCount: .inputCount(inputData.input.count),
+                    lastMid: MIDData.一般.mid,
+                    data: [DicdataElement(ruby: text, cid: CIDData.固有名詞.cid, mid: MIDData.一般.mid, value: value)]
+                ))
+            }
+            // system checker as long-tail fallback, values below every lexicon suggestion
+            let checkerRange = NSRange(location: 0, length: effectivePrefix.utf16.count)
+            if let completions = self.completions(range: checkerRange, in: effectivePrefix, language: language) {
+                var value: PValue = -10 + penalty
+                let delta: PValue = completions.isEmpty ? 0 : -10 / PValue(completions.count)
+                for word in completions {
+                    let text = head + word
+                    guard seen.insert(text).inserted else {
+                        continue
+                    }
+                    result.append(Candidate(
+                        text: text,
+                        value: value,
+                        composingCount: .inputCount(inputData.input.count),
+                        lastMid: MIDData.一般.mid,
+                        data: [DicdataElement(ruby: text, cid: CIDData.固有名詞.cid, mid: MIDData.一般.mid, value: value)]
+                    ))
+                    value += delta
+                }
+            }
+            return result
+        case "en-US":
             var result: [Candidate] = []
             let ruby = String(inputData.input.compactMap {
                 if case let .character(c) = $0.piece { c } else { nil }

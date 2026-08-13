@@ -159,6 +159,11 @@ targets.append(
             .target(name: "llama.cpp", condition: .when(traits: ["Zenzai", "ZenzaiCPU"])),
             .product(name: "Collections", package: "swift-collections"),
         ],
+        resources: [
+            // Copaky fork: bundled Italian frequency lexicon (Leipzig Corpora Collection, CC BY)
+            // Copaky フォーク：イタリア語頻度辞書（Leipzig Corpora Collection、CC BY）
+            .copy("Resources/it_words.txt")
+        ],
         swiftSettings: swiftSettings
     )
 )
