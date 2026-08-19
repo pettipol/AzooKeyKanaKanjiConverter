@@ -155,6 +155,49 @@ enum ItalianFrequencyLexicon {
         return fixes + completions
     }
 
+    // Copaky: Exact folded-word lookup for the public whole-word accent API.
+    // Copaky: 単語単位のアクセントAPI向け完全一致検索。
+    /// Returns the preferred accented entry when it outranks the exact unaccented spelling.
+    /// Lookup uses a lower-bound binary search and scans only the exact folded-key group.
+    static func preferredAccentVariant(for typed: String) -> String? {
+        let foldedWord = fold(typed)
+        guard !foldedWord.isEmpty else {
+            return nil
+        }
+
+        var lo = 0
+        var hi = entries.count
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if entries[mid].folded < foldedWord {
+                lo = mid + 1
+            } else {
+                hi = mid
+            }
+        }
+
+        var exact: Entry?
+        var accent: Entry?
+        var index = lo
+        while index < entries.count, entries[index].folded == foldedWord {
+            let entry = entries[index]
+            if entry.word.lowercased() == foldedWord {
+                if exact.map({ entry.rank < $0.rank }) ?? true {
+                    exact = entry
+                }
+            } else if accent.map({ entry.rank < $0.rank }) ?? true {
+                accent = entry
+            }
+            index += 1
+        }
+
+        guard let accent,
+              exact.map({ accent.rank < $0.rank }) ?? true else {
+            return nil
+        }
+        return adaptCase(of: accent.word, to: typed)
+    }
+
     /// Mirror the case of the typed prefix onto a suggestion: "Perch" → "Perché",
     /// "PERCH" → "PERCHÉ". Proper nouns stored capitalized ("Roma") stay capitalized.
     private static func adaptCase(of word: String, to typed: String) -> String {
